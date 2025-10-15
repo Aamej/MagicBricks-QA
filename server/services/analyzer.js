@@ -429,7 +429,7 @@ class CallQAAnalyzer {
                     criticalSteps: [1, 6, 7, 9],
                     alternativeCriticalSteps: [1, 2, 6, 7, 9],
                     objectiveAchieved: intentFlow.objectiveAchieved || false,
-                    objectiveLogic: 'Step 9 (Call Transfer) + Affirmative Response = Objective Achieved',
+                    objectiveLogic: 'STRICT: All Critical Steps (1,6,7,9) + Affirmative Response to Agent Connection = Objective Achieved',
                     scriptAdherence: 'Enhanced analysis for MagicBricks script compliance with critical step focus',
                     objectionHandling: 'Analyzed against MagicBricks FAQ responses',
                     contextAdherence: 'Enhanced detection of context deviations and unaddressed queries'
@@ -1383,7 +1383,7 @@ class CallQAAnalyzer {
         console.log(`📈 Critical steps completion: ${objectiveAnalysis.completedCriticalSteps.length}/${objectiveAnalysis.totalCriticalSteps}`);
         console.log(`🔍 DEBUG - Detected step numbers:`, objectiveAnalysis.completedCriticalSteps);
         console.log(`🔍 DEBUG - Missing step numbers:`, objectiveAnalysis.missingCriticalSteps);
-        console.log(`🎯 ENHANCED OBJECTIVE LOGIC: Step 9 + Affirmative Response = Objective Achieved`);
+        console.log(`🎯 ENHANCED OBJECTIVE LOGIC: All Critical Steps + Affirmative Response to Agent Connection = Objective Achieved`);
 
         return {
             intentMappings,
@@ -1780,22 +1780,33 @@ class CallQAAnalyzer {
             return this.conversationContexts.voicemail_scenario;
         } else if ((hasBusyResponse || hasCallbackScheduling) && !hasInterestCheck) {
             return this.conversationContexts.callback_scenario;
-        } else if (hasInterestCheck && hasAgentConnection && hasCallTransfer) {
-            // Successful completion - check if via third party
-            if (hasThirdPartyInteraction) {
-                return this.conversationContexts.alternative_successful_flow;
+        } else if (hasInterestCheck && hasAgentConnection) {
+            // Check if agent connection was actually accepted or declined
+            const agentAccepted = this.checkConditionalStep('agent_accepted', intentMappings, conversationContent);
+            const agentDeclined = this.checkConditionalStep('agent_declined', intentMappings, conversationContent);
+            
+            if (agentDeclined || hasAgentDecline) {
+                console.log('🚫 Agent connection was DECLINED - marking as failed inquiry');
+                return this.conversationContexts.failed_inquiry;
+            } else if (agentAccepted && hasCallTransfer) {
+                // Only successful if agent was accepted AND call transfer occurred
+                console.log('✅ Agent connection ACCEPTED and call transfer occurred - marking as successful');
+                if (hasThirdPartyInteraction) {
+                    return this.conversationContexts.alternative_successful_flow;
+                } else {
+                    return this.conversationContexts.successful_property_inquiry;
+                }
             } else {
-                return this.conversationContexts.successful_property_inquiry;
+                // Agent connection offered but no clear acceptance or transfer
+                console.log('⚠️ Agent connection offered but no clear acceptance - marking as failed');
+                return this.conversationContexts.failed_inquiry;
             }
         } else if (hasInterestCheck && hasAgentDecline) {
             return this.conversationContexts.failed_inquiry;
         } else if (hasInterestCheck) {
-            // Started interest check but didn't complete - could be partial success or failure
-            if (hasAgentConnection) {
-                return this.conversationContexts.successful_property_inquiry; // Partial success
-            } else {
-                return this.conversationContexts.failed_inquiry;
-            }
+            // Started interest check but didn't complete
+            console.log('⚠️ Interest check started but incomplete flow - marking as failed');
+            return this.conversationContexts.failed_inquiry;
         } else {
             // Default to failed inquiry if no clear pattern
             return this.conversationContexts.failed_inquiry;
@@ -1908,15 +1919,42 @@ class CallQAAnalyzer {
                     intentMappings.some(m => m.conversationStep === 'callback_scheduling');
 
             case 'agent_accepted':
-                return conversationContent.includes('yes') ||
+                // CRITICAL: Check for negative responses first - these override any positive
+                if (conversationContent.includes('no') ||
+                    conversationContent.includes('नहीं') ||
+                    conversationContent.includes('रुक जाइए') ||
+                    conversationContent.includes('अभी रुक जाइए') ||
+                    conversationContent.includes('रुकिए') ||
+                    conversationContent.includes('wait') ||
+                    conversationContent.includes('stop') ||
+                    conversationContent.includes('अभी नहीं') ||
+                    conversationContent.includes('not now') ||
+                    conversationContent.includes('not interested') ||
+                    intentMappings.some(m => m.conversationStep === 'agent_decline_handling')) {
+                    console.log('🚫 EXPLICIT DECLINE DETECTED - Agent connection rejected');
+                    return false; // Explicit decline overrides everything
+                }
+                
+                // Only return true for clear affirmative responses OR callback requests
+                return (conversationContent.includes('yes') ||
                     conversationContent.includes('हाँ') ||
                     conversationContent.includes('okay') ||
                     conversationContent.includes('ठीक है') ||
+                    conversationContent.includes('callback') ||
+                    conversationContent.includes('call back') ||
+                    conversationContent.includes('बाद में call')) &&
                     intentMappings.some(m => m.conversationStep === 'call_transfer');
 
             case 'agent_declined':
                 return conversationContent.includes('no') ||
                     conversationContent.includes('नहीं') ||
+                    conversationContent.includes('रुक जाइए') ||
+                    conversationContent.includes('अभी रुक जाइए') ||
+                    conversationContent.includes('रुकिए') ||
+                    conversationContent.includes('wait') ||
+                    conversationContent.includes('stop') ||
+                    conversationContent.includes('अभी नहीं') ||
+                    conversationContent.includes('not now') ||
                     conversationContent.includes('not interested') ||
                     intentMappings.some(m => m.conversationStep === 'agent_decline_handling');
 
@@ -3875,13 +3913,31 @@ class CallQAAnalyzer {
         const alternativeObjectiveSteps = alternativeCriticalSteps.filter(step => completedSteps.includes(step));
         const alternativeObjectiveComplete = alternativeObjectiveSteps.length === alternativeCriticalSteps.length;
 
-        // Enhanced objective completion: If step 9 (call transfer) is present, check for affirmative response
+        // CRITICAL: Enhanced objective completion logic - MUST have affirmative response to agent connection
         const hasCallTransfer = completedSteps.includes(9);
-        const hasAffirmativeResponse = hasCallTransfer ? this.checkAffirmativeResponseToTransfer(intentMappings) : false;
+        const hasAgentConnectionOffer = completedSteps.includes(7);
+        const hasAffirmativeResponse = (hasCallTransfer || hasAgentConnectionOffer) ? 
+            this.checkAffirmativeResponseToTransfer(intentMappings) : false;
 
-        // Objective achieved if all critical steps completed OR if call transfer + affirmative response
-        const objectiveAchieved = primaryObjectiveComplete || alternativeObjectiveComplete ||
-            (hasCallTransfer && hasAffirmativeResponse && primaryObjectiveSteps.length >= 3);
+        console.log(`🔍 OBJECTIVE VALIDATION:`);
+        console.log(`   Has Call Transfer (Step 9): ${hasCallTransfer}`);
+        console.log(`   Has Agent Connection Offer (Step 7): ${hasAgentConnectionOffer}`);
+        console.log(`   Has Affirmative Response: ${hasAffirmativeResponse}`);
+
+        // STRICT LOGIC: Objective achieved ONLY if:
+        // 1. All critical steps completed AND affirmative response to agent connection
+        // 2. OR alternative flow completed AND affirmative response
+        const objectiveAchieved = (primaryObjectiveComplete && hasAffirmativeResponse) || 
+                                 (alternativeObjectiveComplete && hasAffirmativeResponse);
+
+        console.log(`🎯 FINAL OBJECTIVE DECISION: ${objectiveAchieved ? 'ACHIEVED' : 'NOT ACHIEVED'}`);
+        if (!objectiveAchieved) {
+            if (!hasAffirmativeResponse) {
+                console.log(`❌ REASON: No affirmative response to agent connection offer`);
+            } else if (!primaryObjectiveComplete && !alternativeObjectiveComplete) {
+                console.log(`❌ REASON: Critical steps incomplete`);
+            }
+        }
 
         return {
             objectiveAchieved,
@@ -5077,7 +5133,19 @@ class CallQAAnalyzer {
         const affirmativePatterns = [
             /\b(हाँ|yes|ठीक\s+है|okay|ok|sure|alright)\b/gi,
             /\b(बिल्कुल|जरूर|चलिए|ठीक)\b/gi,
-            /\b(go\s+ahead|proceed|continue)\b/gi
+            /\b(go\s+ahead|proceed|continue)\b/gi,
+            /\b(callback|call\s+back|बाद\s+में\s+call)\b/gi // Accept callback requests as positive
+        ];
+
+        // CRITICAL: Check for negative/decline responses first
+        const negativePatterns = [
+            /\b(no|नहीं|not\s+interested|not\s+now)\b/gi,
+            /\b(रुक\s+जाइए|रुकिए|अभी\s+रुक\s+जाइए)\b/gi, // Specific pattern from transcript
+            /\b(wait|stop|hold\s+on|pause)\b/gi,
+            /\b(अभी\s+नहीं|not\s+right\s+now|later)\b/gi,
+            /\b(decline|refuse|reject|मना)\b/gi,
+            /\b(busy|व्यस्त|occupied)\b/gi,
+            /\b(sorry.*no|sorry.*नहीं)\b/gi // Polite decline patterns
         ];
 
         // Find the last call transfer or agent connection offer
@@ -5092,11 +5160,21 @@ class CallQAAnalyzer {
 
         if (lastTransferIndex === -1) return false;
 
-        // Check for affirmative responses after the transfer offer
+        // Check responses after the transfer offer
         for (let i = lastTransferIndex + 1; i < intentMappings.length; i++) {
             const mapping = intentMappings[i];
             if (mapping.speaker && mapping.speaker.toLowerCase().includes('human')) {
-                // Check if human response contains affirmative patterns
+                
+                // FIRST: Check for negative responses - these override any affirmative
+                for (const pattern of negativePatterns) {
+                    if (pattern.test(mapping.text)) {
+                        console.log(`❌ Found NEGATIVE response to call transfer: "${mapping.text.substring(0, 50)}..."`);
+                        console.log(`🚫 OBJECTIVE NOT ACHIEVED - Human declined agent connection`);
+                        return false;
+                    }
+                }
+
+                // SECOND: Check for affirmative responses only if no negative found
                 for (const pattern of affirmativePatterns) {
                     if (pattern.test(mapping.text)) {
                         console.log(`✅ Found affirmative response to call transfer: "${mapping.text.substring(0, 50)}..."`);
