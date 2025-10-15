@@ -106,3 +106,8 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Documentation files to keep local only
+ENHANCED_WEIGHTED_SCORING.md
+MAGICBRICKS_ANALYSIS_UPDATE.md
+Technical documentation.md
