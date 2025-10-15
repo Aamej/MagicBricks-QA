@@ -1785,8 +1785,8 @@ class CallQAAnalyzer {
             return this.conversationContexts.callback_scenario;
         } else if (hasInterestCheck && hasAgentConnection) {
             // Check if agent connection was actually accepted or declined
-            const agentAccepted = this.checkConditionalStep('agent_accepted', intentMappings, conversationContent);
-            const agentDeclined = this.checkConditionalStep('agent_declined', intentMappings, conversationContent);
+            const agentAccepted = this.isConditionMet('agent_accepted', conversationContent, intentMappings);
+            const agentDeclined = this.isConditionMet('agent_declined', conversationContent, intentMappings);
             
             if (agentDeclined || hasAgentDecline) {
                 console.log('🚫 Agent connection was DECLINED - marking as failed inquiry');
@@ -1945,8 +1945,7 @@ class CallQAAnalyzer {
                     conversationContent.includes('ठीक है') ||
                     conversationContent.includes('callback') ||
                     conversationContent.includes('call back') ||
-                    conversationContent.includes('बाद में call')) &&
-                    intentMappings.some(m => m.conversationStep === 'call_transfer');
+                    conversationContent.includes('बाद में call'));
 
             case 'agent_declined':
                 return conversationContent.includes('no') ||
