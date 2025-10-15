@@ -1761,6 +1761,9 @@ class CallQAAnalyzer {
         // Analyze the conversation to determine the primary context for MagicBricks
         const detectedIntents = intentMappings.map(m => m.conversationStep);
         const detectedSteps = intentMappings.map(m => m.stepNumber).filter(s => s > 0);
+        
+        // Create conversation content from intent mappings for conditional checks
+        const conversationContent = intentMappings.map(m => m.text || '').join(' ').toLowerCase();
 
         // Check for specific MagicBricks conversation patterns
         const hasThirdPartyInteraction = detectedIntents.includes('third_party_interaction');
